@@ -19,66 +19,7 @@
 '                                                                              '
 ' ============================================================================ '
 
-' TortoiseSVN is an Open Source and free software licensed under the GNU General Public License (GPL). It is free to download and free to use, either personally or commercially, on any number of PCs. http://tortoisesvn.net/docs/release/TortoiseSVN_en/tsvn-preface-source.html
-' Altium®, Altium Designer®, DXP™ and their respective logos are trademarks or registered trademarks of Altium Limited or its subsidiaries. See the full Copyright at http://www.altium.com/copyrights-and-trademarks and the EULA at http://www.altium.com/eula .
-' All other registered or unregistered trademarks referenced herein are the property of their respective owners.
-
-' ------------------------------------------------------------------------------
-' What does this script do
-' -------------------
-'  * TSVN_CommitFolder is a function to commit a project, with extended features compared to the built-in function of Altium:
-'    -> it works on all the content of the project folder, not only the files contained in the Altium project
-'    -> it warns the user before committing if unsaved modifications are detected (everyone hates to forget to save just before a commit)
-'    -> it automatically refreshes the SVN icons at the end of the operation
-'  * TSVN_UpdateFolder is a function to update a project, with extended features compared to the built-in function of Altium:
-'    -> it works on all the content of the project folder, not only the files contained in the Altium project
-'    -> it does not update if unsaved modifications are detected on any file
-'    -> it closes and re-open all the project files that were previously open to be sure to work on the all fresh files
-'
-' ------------------------------------------------------------------------------
-' How to use this script
-' ----------------------
-'  1) From Altium Designer, open a file or a project that is/are under version
-'     control with SVN.
-'  2) If your files contain unsaved modifications, please save them all.
-'  3) With your document currently visible, run this script by one of
-'     this two means:
-'     a) Opening the PrjScr project, then click on "DXP > Run Script" and select
-'        TSVN_CommitFolder or TSVN_UpdateFolder.
-'     b) Creating a custom menu button with Process set to
-'          ScriptingSystem:RunScript
-'        and Parameters set to something like
-'          ProjectName=[*PathToPrjScr*]|ProcName=[*PathToTheCurrentFile*]>[*NameOfTheFunction*]
-'     Be sure that the visible document at the time you run the script
-'     is a document that you wish to update/commit.
-'  Note: In Update mode, all the open documents will be closed and re-opened
-'    after the update.
-'
-' ------------------------------------------------------------------------------
-' Setup requirements
-' ------------------
-'  * TortoiseSVN must be properly installed on your system. In particular,
-'    the Windows path must contain the TortoiseSVN binaries directory.
-'  * The project file (*.PrjScr) associated with your script must include
-'    the following dependencies contained in the "Libraries" folder:
-'    - Lib_FileManagement.vbs
-'    - Lib_AltiumFunctions.vbs
-'    - Lib_VBScriptAdditions.vbs
-'  * It is strongly advised to install TortoiseSVN with its command-line
-'    binaries and configure Altium Designer to use them instead of the
-'    built-in Subversion client.
-'
-' ------------------------------------------------------------------------------
-' Compatibility concerns
-' ----------------------
-'  * The current version of this script is tested and works well with:
-'     -> Altium Designer 15.0.15 build 41991
-'     -> Altium Designer 14.3.17 build 42447
-'  * The current version of this script is tested and works well with: 
-'     -> TortoiseSVN 1.8.11 build 26392
-'  * The current version of this script is known to work under Windows 7 64-bit.
-
-' TortoiseSVN command line help: http://tortoisesvn.net/docs/release/TortoiseSVN_en/tsvn-automation.html
+' For a description of this script and some help on how to use it, please see the attached ReadMe file.
 
 
 
@@ -116,6 +57,10 @@ End Function
 
 
 ' --------------------------------------------------------------------------------
+
+'***********
+' TODO: for every function, check if DM_FocusedDocument is part of DM_FocusedProject. There can be some cases where this is not true.
+'***********
 
 
 
@@ -334,6 +279,9 @@ Sub TSVN_UpdateFolder
     'Call Client.OpenDocument("", ProjectPath) ' does not work if the project is not already open...
     
     ' and re-open all the documents that were open before the update
+	'
+	' *********** TODO: re-open files in the same order as they have been closed ***********
+	'
     For DocCounter = 0 to (arrayCounter - 1)
       'ShowMessage arrayPleaseReOpen(DocCounter,1)
       If DoesFileExist( arrayPleaseReOpen(DocCounter,1) ) Then ' the file may not exist any more after the update!
@@ -342,6 +290,83 @@ Sub TSVN_UpdateFolder
     Next
     
   End If
+End Sub
+
+
+
+' TortoiseSVN: lock the current file
+Sub TSVN_LockFile
+  Dim objShell
+  Dim lockResult
   
+  ' Check if Client is available
+  If Client Is Nothing Then Exit Sub
+  ' Check if GetWorkspace is available
+  If GetWorkspace Is Nothing Then Exit Sub
+  
+  ' Check if the command is launched from an opened file
+  If Not TryCmd("GetWorkspace.DM_FocusedDocument.DM_FileName") Then
+    ShowError "This script must be loaded from an open file."
+    Exit Sub ' no filename = no focused document = no document open
+  End If
+    
+  ' Check if the file exists (if this is a new file that has not been saved yet, the result is False)
+  If Not FileExists(GetWorkspace.DM_FocusedDocument.DM_FullPath) Then
+    ShowError "Please save the file before trying to lock it."
+    Exit Sub
+  End If
+  
+  ' let's lock the file
+  Set objShell = CreateObject( "WScript.Shell" )
+  If TortoiseProc <> "" Then
+    lockResult = objShell.Run( TortoiseProc & "/command:lock /path:""" & GetWorkspace.DM_FocusedDocument.DM_FullPath & """" , 10 , True ) ' blocking call
+  Else
+    ShowError "The path to the TortoiseSVN program is not properly defined. Impossible to lock!"
+  End If
+  Set objShell = Nothing
+  
+  ' then refresh the SVN status of the project files
+  If lockResult >= 0 Then
+    Call ServerRunProcessSend("VersionControl:VersionControl", "ObjectKind=FocusedProject | Action=RefreshProject")
+  End If
+End Sub
+
+
+
+' TortoiseSVN: unlock the current file
+Sub TSVN_UnlockFile
+  Dim objShell
+  Dim unlockResult
+  
+  ' Check if Client is available
+  If Client Is Nothing Then Exit Sub
+  ' Check if GetWorkspace is available
+  If GetWorkspace Is Nothing Then Exit Sub
+  
+  ' Check if the command is launched from an opened file
+  If Not TryCmd("GetWorkspace.DM_FocusedDocument.DM_FileName") Then
+    ShowError "This script must be loaded from an open file."
+    Exit Sub ' no filename = no focused document = no document open
+  End If
+    
+  ' Check if the file exists (if this is a new file that has not been saved yet, the result is False)
+  If Not FileExists(GetWorkspace.DM_FocusedDocument.DM_FullPath) Then
+    ShowError "Please save the file before trying to unlock it."
+    Exit Sub
+  End If
+  
+  ' let's unlock the file
+  Set objShell = CreateObject( "WScript.Shell" )
+  If TortoiseProc <> "" Then
+    unlockResult = objShell.Run( TortoiseProc & "/command:unlock /path:""" & GetWorkspace.DM_FocusedDocument.DM_FullPath & """" , 10 , True ) ' blocking call
+  Else
+    ShowError "The path to the TortoiseSVN program is not properly defined. Impossible to unlock!"
+  End If
+  Set objShell = Nothing
+  
+  ' then refresh the SVN status of the project files
+  If unlockResult >= 0 Then
+    Call ServerRunProcessSend("VersionControl:VersionControl", "ObjectKind=FocusedProject | Action=RefreshProject")
+  End If
 End Sub
 
